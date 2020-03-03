@@ -1,0 +1,323 @@
+== Lab3 - Apache Kafka/Change Data Capture
+:experimental:
+
+*Apache Kafka* is the de facto standard for asynchronous event propagation between microservices. *Red Hat AMQ Streams* makes it easy to run Apache Kafka on OpenShift with key features:
+
+- Designed for horizontal scalability
+- Message ordering guarantee at the partition level
+- Message rewind/replay - Long term storage allows the reconstruction of an application state by replaying the messages
+
+AMQ streams component makes Apache Kafka _OpenShift native_ through the use of powerful operators that simplify the deployment, configuration, management, and use of Apache Kafka on OpenShift.
+
+To respond to business demands quickly and efficiently, you need a way to integrate applications and data spread across your enterprise. Things get challenging, though, when adding a service’s database to the picture: how can you avoid inconsistencies between _Kafka and the database_?
+
+Enter *change data capture* (CDC) and *Debezium*. By capturing changes from the log files of the database, Debezium gives you both reliable and consistent inter-service messaging via Kafka and instant read-your-own-write semantics for services themselves.
+
+=== Goals of this lab
+
+The goal of this lab is to add some stream processing on the _orders_ data that is coming in. We will first configure our MongoDB database to enable CDC, then we will deploy a simple Kafka Cluster where we instantiate the MongoDB Debezium CDC connector to retrieve the orders from the database. Finally we will deploy a Kafka Streams application built on Quarkus that analyzes the data to check for potential frauds. After this lab, you should end up with something like:
+
+image::lab3-goal.png[goal, 700]
+
+Scalability is one of the flagship features of Apache Kafka. It is achieved by partitioning the data and distributing them across multiple brokers. Such data sharding also has a big impact on how clients connect and use the broker. This is especially visible when Kafka is running within a platform like Kubernetes but is accessed from outside of that platform.
+
+https://strimzi.io/[Strimzi] is an open source project that provides container images and operators for running https://developers.redhat.com/videos/youtube/CZhOJ_ysIiI/[Apache kafka].
+
+In this lab, we will use productized and supported versions of the Strimzi and Apache Kafka projects through https://www.redhat.com/en/technologies/jboss-middleware/amq?extIdCarryOver=true&sc_cid=701f2000001OH7TAAW[Red Hat AMQ,window=_blank].
+
+=== 1. Enable Change Data Capture in MongoDB
+
+*Change Data Capture’s MongoDB connector* tracks a _MongoDB replica set_ or a _MongoDB sharded cluster_ for document changes in databases and collections, recording those changes as events in Kafka topics. The MongoDB connector uses MongoDB’s `oplog` to capture the changes, so the connector works only with MongoDB replica sets or with sharded clusters where each shard is a separate replica set. 
+
+We will need to configure our Mongo Database to enable CDC.
+
+1. First, we need to change the deployment from one single node to a `replica set`. To achive this, we will need to change the way our container starts by overriding the _entrypoint command_. 
+
+1. From the terminal window run the following command:
++
+[source,sh,role="copypaste"]
+----
+oc patch dc/order-database -p '{ "spec": { "template": { "spec": { "containers": [ { "name": "order-database", "command": [ "mongod" ], "args": [ "--bind_ip_all", "--replSet", "rs0", "--auth" ] } ] } } } }'
+----
++
+This will start a new deployment process, wait for the new pod configuration to start by checking the topology view in the OpenShift web console.
+
+1. Click on the *order-database* icon to access the deployment detail
++
+image::orderdb-topology.png[order-database topology, 700]
+
+1. Click on *View Logs*
++
+image::orderdb-viewlogs.png[order-database view logs, 700]
+
+1. Click on the *Terminal* tab to access the pod
++
+image::orderdb-terminal.png[order-database terminal, 700]
+
+1. We will enable CDC by issuing the following commands in the terminal window. First make this the _primary_ replica by executing this command:
++
+[source,sh,role="copypaste"]
+----
+mongo localhost:27017/order <<-EOF
+    rs.initiate({
+        _id: "rs0",
+        members: [ { _id: 0, host: "order-database:27017" } ]
+    });
+EOF
+----
++
+You should get the following result back:
++
+[source,none,role="copypaste"]
+----
+MongoDB shell version v4.0.16
+connecting to: mongodb://localhost:27017/order?gssapiServiceName=mongodb
+Implicit session: session { "id" : UUID("78dbbec9-079f-4356-be1a-f20f19bf434e") }
+MongoDB server version: 4.0.16
+{ "ok" : 1 }
+bye
+----
+
+1. Next we need to create an user to access the database as we enabled _authentication_. Create the *admin* user:
++
+[source,sh,role="copypaste"]
+----
+mongo localhost:27017/admin <<-EOF
+    db.createUser({ user: 'admin', pwd: 'admin', roles: [ { role: "userAdminAnyDatabase", db: "admin" } ] });
+EOF
+----
++
+You should get the following result back:
++
+[source,none,role="copypaste"]
+----
+MongoDB shell version v4.0.16
+connecting to: mongodb://localhost:27017/admin?gssapiServiceName=mongodb
+Implicit session: session { "id" : UUID("d600f478-066c-40c2-b0c4-4faa6d07a342") }
+MongoDB server version: 4.0.16
+Successfully added user: {
+        "user" : "admin",
+        "roles" : [
+                {
+                        "role" : "userAdminAnyDatabase",
+                        "db" : "admin"
+                }
+        ]
+}
+bye
+----
+
+1. Now is time to create the debezium user to access our data. Create the *listDatabases* role and the *debezium* user:
++
+[source,sh,role="copypaste"]
+----
+mongo -u admin -p admin localhost:27017/admin <<-EOF
+    db.runCommand({
+        createRole: "listDatabases",
+        privileges: [
+            { resource: { cluster : true }, actions: ["listDatabases"]}
+        ],
+        roles: []
+    });
+    db.createUser({
+        user: 'debezium',
+        pwd: 'dbz',
+        roles: [
+            { role: "readWrite", db: "order" },
+            { role: "read", db: "local" },
+            { role: "listDatabases", db: "admin" },
+            { role: "read", db: "config" },
+            { role: "read", db: "admin" }
+        ]
+    });
+EOF
+----
++
+You should get the following result back:
++
+[source,none,role="copypaste"]
+----
+MongoDB shell version v4.0.16
+connecting to: mongodb://localhost:27017/admin?gssapiServiceName=mongodb
+Implicit session: session { "id" : UUID("7e53d964-0420-4cef-944d-623bfeee685a") }
+MongoDB server version: 4.0.16
+{
+        "ok" : 1,
+        "operationTime" : Timestamp(1582830165, 3),
+        "$clusterTime" : {
+                "clusterTime" : Timestamp(1582830165, 3),
+                "signature" : {
+                        "hash" : BinData(0,"69Zr4DaNhiBz+fyTFBEqP2OuIts="),
+                        "keyId" : NumberLong("6798202436587618305")
+                }
+        }
+}
+Successfully added user: {
+        "user" : "debezium",
+        "roles" : [
+                {
+                        "role" : "readWrite",
+                        "db" : "order"
+                },
+                {
+                        "role" : "read",
+                        "db" : "local"
+                },
+                {
+                        "role" : "listDatabases",
+                        "db" : "admin"
+                },
+                {
+                        "role" : "read",
+                        "db" : "config"
+                },
+                {
+                        "role" : "read",
+                        "db" : "admin"
+                }
+        ]
+}
+bye
+----
+
+You just enabled the MongoDB database to allow the *Debezium* connector read the transaction log.
+
+=== 2. Deploying an Apache Kafka cluster on OpenShift
+
+AMQ streams component uses powerful operators that simplify the deployment, configuration, management, and use of Apache Kafka on Red Hat OpenShift® Container Platform. AMQ Streams is already installed using the following _Operators_ so you don’t need to install it in this lab:
+
+* *Kafka Operator* - Responsible for deploying and managing Apache Kafka clusters within an OpenShift cluster.
+* *Topic Operator* - Responsible for managing Kafka topics within a Kafka cluster running within an OpenShift cluster.
+* *User Operator* - Responsible for managing Kafka users within a Kafka cluster running within an OpenShift cluster.
+
+The basic architecture of operators in AMQ is seen below:
+
+image::kafka-operators-arch.png[amqstreams, 700]
+
+In this section you will learn how to start a local Kafka cluster.
+
+1. Let's create a **Kafka cluster**. Click *+Add* on the left, on the _From Catalog_ box on the project overview:
++
+image::kafka-catalog.png[kafka, 700]
+
+1. Type in `kafka` in the search box, and click on the *Kafka*:
++
+image::kafka-create.png[kafka, 700]
+
+1. Click on *Create* and you will enter YAML editor that defines a *Kafka* Cluster. 
++
+image::kafka-catalog-create.png[kafkacatalogcreate, 700]
+
+1. Replace the editor content with the following code:
++
+[source,none,role="copypaste"]
+----
+apiVersion: kafka.strimzi.io/v1beta1
+kind: Kafka
+metadata:
+  name: events
+spec:
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+  kafka:
+    listeners:
+      external:
+        type: route
+      plain: {}
+      tls: {}
+    replicas: 3
+    storage:
+      type: ephemeral
+  zookeeper:
+    replicas: 3
+    storage:
+      type: ephemeral
+----
+
+1. Click on *Create* to deploy the Kafka cluster.
++
+image::kafka-create-detail.png[kafka, 700]
+
+1. Wait for cluster to start it can take a few minutes as the operator will deploy your Kafka cluster infrastructure and related operators to manage it.
+
+=== 3. Configure MongoDB CDC Connector
+
+For setting up Apache Kafka and Kafka Connect on OpenShift, Red Hat AMQ Streams is used. Here we will deploy and use Kafka Connect S2I (Source to Image). S2I is a framework to build images that take application source code as an input and produce a new image that runs the assembled application as output. 
+
+1. In the same _Operator Details_ page, click the *Kafka Connect* tab.
++
+image::kafkaconnects2i.png[kafkaConnect, 700]
+
+1. Click in **Create Kafka Connect* button.
++
+image::kafkaconnect-create.png[kafkaconnect-create, 700]
+
+1. Replace the _YAML_ editor content with the following code:
++
+[source,none,role="copypaste"]
+----
+apiVersion: kafka.strimzi.io/v1beta1
+kind: KafkaConnect
+metadata:
+  name: debezium
+spec:
+  bootstrapServers: 'events-kafka-bootstrap:9092'
+  image: 'quay.io/hguerreroo/debezium-connect:1.0.2-mongodb'
+  replicas: 1
+  jvmOptions:
+    gcLoggingEnabled: false
+----
+
+1. Click *Create* button to deploy the _Kafka Connect connector_.
++
+image::kafkaconnect-detail.png[kafkaconnect-detail, 700]
+
+1. Wait for the default deployment to finish and deploy the first pod.
+
+1. Expose the Kafka Connect REST API.
++
+[source,bash,role="copypaste"]
+----
+oc expose service debezium-connect-api --name kafka-connect
+----
+
+1. Create a new *connector config* by calling the `POST` method on the _Kafka Connect API_ to react to changes in the `orders` table called `orders-connector`.
++
+[source,bash,role="copypaste"]
+----
+cat << EOF | curl -X POST -H "Accept:application/json" -H "Content-Type:application/json" `oc get route kafka-connect -o jsonpath='{.spec.host}'`/connectors -d @-
+{
+  "name": "orders-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.mongodb.MongoDbConnector",
+    "tasks.max" : "1",
+    "mongodb.hosts" : "rs0/order-database:27017",
+    "mongodb.name" : "dbserver1",
+    "mongodb.user" : "debezium",
+    "mongodb.password" : "dbz",
+    "database.whitelist" : "order",
+    "database.history.kafka.bootstrap.servers" : "events-kafka-bootstrap:9092",
+    "key.converter" : "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable" : "false",
+    "value.converter" : "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable" : "false",
+    "transforms" : "extract",
+    "transforms.extract.type": "io.debezium.connector.mongodb.transforms.ExtractNewDocumentState"
+  }
+}
+EOF
+----
+
+1. Get back to the developer console and click on the *Kafka Topic* tab.
++
+image::kafka-topic-tab.png[kafka-topic-tab, 700]
+
+1. Notice the newly created _topics_ Custom Resources. The one named *dbserver1.order.order* is where our events are being sent.
++
+image::kafka-topic-order.png[kafka-topic-order, 700]
+
+This will configure the MongoDB connector in the _Kafka Connect cluster_ to start reading the transaction log so we can sent events to the Kafka cluster everytime there is a new order in the system without changing the actual code of our application. This events are now available in the Kafka event bus for other microservices to consume and process.
+
+=== 4. Deploying a Kafka Streams application
+
