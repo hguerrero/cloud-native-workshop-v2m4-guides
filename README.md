@@ -8,7 +8,7 @@ Agenda
 * Getting Started with Advanced Cloud-Native App Dev
 * Creating High-performing Cachable Service
 * Creating Event-Driven Service
-* Evolving Serverless Service
+* Apache Kafka and Change Data Capture
 
 Lab Instructions on OpenShift
 ===

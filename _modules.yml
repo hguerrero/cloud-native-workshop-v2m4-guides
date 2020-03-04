@@ -10,5 +10,5 @@ modules:
     name: Creating High-performing Cacheable Service
   event-driven-services:
     name: Creating Event-Driven Service
-  evolve-serverless-services:
-    name: Evolving Serverless Service
+  change-data-capture:
+    name: Apache Kafka and Change Data Capture

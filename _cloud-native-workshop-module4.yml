@@ -2,7 +2,7 @@ id: "cloudnative"
 name: "The Containers and Cloud-Native Roadshow Dev Track - Module 4"
 
 content:
-  url: https://raw.githubusercontent.com/RedHat-Middleware-Workshops/cloud-native-workshop-v2m4-guides.git/master
+  url: https://raw.githubusercontent.com/hguerrero/cloud-native-workshop-v2m4-guides/m4
 
 vars:
   ROUTE_SUBDOMAIN:
@@ -23,4 +23,4 @@ modules:
   - cloud-native-architectures
   - high-performing-cache-services
   - event-driven-services
-  - evolve-serverless-services
+  - change-data-capture
