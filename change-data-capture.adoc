@@ -241,6 +241,11 @@ image::kafka-create-detail.png[kafka, 700]
 
 1. Wait for cluster to start it can take a few minutes as the operator will deploy your Kafka cluster infrastructure and related operators to manage it.
 
+Make sure it’s actually done rolling out. Visit the {{ CONSOLE_URL }}/topology/ns/{{ USER_ID }}-cloudnativeapps[Topology View, window=_blank] to check the new pods. Ensure you get the blue circles!
+
+image::kafka-topology.png[order, 700]
+
+
 === 3. Configure MongoDB CDC Connector
 
 For setting up Apache Kafka and Kafka Connect on OpenShift, Red Hat AMQ Streams is used. Here we will deploy and use Kafka Connect S2I (Source to Image). S2I is a framework to build images that take application source code as an input and produce a new image that runs the assembled application as output. 
@@ -321,3 +326,4 @@ This will configure the MongoDB connector in the _Kafka Connect cluster_ to star
 
 === 4. Deploying a Kafka Streams application
 
+Text
