@@ -60,7 +60,14 @@ Click on *Create* to start the deployment
 
 image::addressspace-detail.png[details, 700]
 
-The AMQ operator will check the new resource and will begin to prepare all required components. Wait for the *Address Space* to deploy the infrastructure until the status change _Active_. Click in the *amq* link to show the Overview Page.
+The AMQ operator will check the new resource and will begin to prepare all required components. Wait for the *Address Space* to deploy the infrastructure until the status change _Active_. 
+
+[NOTE]
+====
+This could take a few minutes to finish, if looks like taking longer refresh the page.
+====
+
+Click in the *amq* link to show the Overview Page.
 
 image::addressspace-active.png[active, 700]
 
@@ -72,7 +79,7 @@ Open a new browser tab and use the hostname like this format *https://{{ externa
 
 [NOTE]
 ====
-Note the use of _HTTPS_.
+Note the use of _HTTPS_. You will need to enter your OpenShift console credentials again.
 ====
 
 In the main AMQ web console screen, click on the *+ Create* button to start adding the required topics.
@@ -322,7 +329,15 @@ mvn quarkus:add-extension -Dextensions="amqp" -f $CHE_PROJECTS_ROOT/cloud-native
 
 This will add the Messaging extension and APIs to our Cart service app.
 
-Like our Payment service, add this code to the `// TODO: Add annotation of orders messaging configuration here` marker inside the `CartResource` class inside the `com.redhat.cloudnative` package:
+Add the proper imports for this messaging code by adding the following code under `// TODO: add EDA imports`:
+
+[source,none,role="copypaste"]
+----
+import io.smallrye.reactive.messaging.annotations.Channel;
+import io.smallrye.reactive.messaging.annotations.Emitter;
+----
+
+Like our Payment service, add this code to the `// TODO: Add injection of orders messaging producer here` marker inside the `CartResource` class inside the `com.redhat.cloudnative` package:
 
 [source,none,role="copypaste"]
 ----
@@ -339,21 +354,6 @@ The `sendOrder()` method is quite simple, it takes the Order POJO as a param and
         order.setTotal(shoppingCartService.getShoppingCart(cartId).getCartTotal() + "");
         producer.send(Json.encode(order));
         log.info("Sent message: " + Json.encode(order));
-    }
-----
-
-Now that we have those methods, Let'sadd a call to our `sendOrder()` method when we are checking out. Replace the code for `checkout()` with this code:
-
-[source,none,role="copypaste"]
-----
-    @POST
-    @Path("/checkout/{cartId}")
-    @Consumes(MediaType.APPLICATION_JSON)
-    @Produces(MediaType.APPLICATION_JSON)
-    @Operation(summary = "checkout")
-    public ShoppingCart checkout(@PathParam("cartId") String cartId, Order order) {
-        sendOrder(order, cartId);
-        return shoppingCartService.checkout(cartId);
     }
 ----
 
