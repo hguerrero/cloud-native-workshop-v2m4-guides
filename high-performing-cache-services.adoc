@@ -935,7 +935,7 @@ Run the following `oc` command to deploy a `MongoDB` to OpenShift via CodeReady 
 
 [source,sh,role="copypaste"]
 ----
-oc new-app -n {{ USER_ID }}-cloudnativeapps --docker-image mongo:4.0 --name=order-database
+oc new-app -n {{ USER_ID }}-cloudnativeapps --docker-image mongo:4.0 --name=order-database -e MONGO_INITDB_ROOT_USERNAME=debezium -e MONGO_INITDB_ROOT_PASSWORD=dbz
 ----
 
 Once the MongoDB is deployed successfully, create a build configuration for your application using OpenJDK base container image in OpenShift:
