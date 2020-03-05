@@ -182,7 +182,32 @@ bye
 
 You just enabled the MongoDB database to allow the *Debezium* connector read the transaction log.
 
-=== 2. Deploying an Apache Kafka cluster on OpenShift
+=== 2. Deploy the orders simulator app
+
+As we mentioned before, one of the benefits of Apache Kafka is the scalability and high throughput.  To check this features, is difficult to manually test our web application. We need some help. Let's deploy an orders simulator app that will inject some random orders coming from partners.
+
+1. In the terminal issue the following command:
++
+[source,none,role="copypaste"]
+----
+oc new-app -n {{ USER_ID }}-cloudnativeapps --docker-image quay.io/hguerreroo/order-producer:jvm --name=simulator
+----
+
+1. Configure the deployment to inject the messaging endpoint `hostname` and `port` using the ConfigMap created by our _AddressSpace_ configuration.
++
+[source,sh,role="copypaste"]
+----
+oc patch dc/simulator -p '{ "spec": { "template": { "spec": { "containers": [ { "name": "simulator", "env": [ { "name": "AMQP_HOST", "valueFrom": { "configMapKeyRef": { "name": "amq-config", "key": "service.host" } } }, { "name": "AMQP_PORT", "valueFrom": { "configMapKeyRef": { "name": "amq-config", "key": "service.port.amqp" } } } ] } ] } } } }' 
+----
+
+The application simulator will start sending _orders_ to the `order-service` topic in the background. You can track the orders from the http://coolstore-ui-{{ USER_ID }}-cloudnativeapps.{{ ROUTE_SUBDOMAIN}}[Red Hat Cool Store, window=_blank]!
+
+[NOTE]
+====
+You can stop the `simulator` any time by scaling the _deployment config_ to zero (0).
+====
+
+=== 3. Deploying an Apache Kafka cluster on OpenShift
 
 AMQ streams component uses powerful operators that simplify the deployment, configuration, management, and use of Apache Kafka on Red Hat OpenShift® Container Platform. AMQ Streams is already installed using the following _Operators_ so you don’t need to install it in this lab:
 
@@ -246,7 +271,7 @@ Make sure it’s actually done rolling out. Visit the {{ CONSOLE_URL }}/topology
 image::kafka-topology.png[order, 700]
 
 
-=== 3. Configure MongoDB CDC Connector
+=== 4. Configure MongoDB CDC Connector
 
 For setting up Apache Kafka and Kafka Connect on OpenShift, Red Hat AMQ Streams is used. Here we will deploy and use Kafka Connect S2I (Source to Image). S2I is a framework to build images that take application source code as an input and produce a new image that runs the assembled application as output. 
 
@@ -324,6 +349,6 @@ image::kafka-topic-order.png[kafka-topic-order, 700]
 
 This will configure the MongoDB connector in the _Kafka Connect cluster_ to start reading the transaction log so we can sent events to the Kafka cluster everytime there is a new order in the system without changing the actual code of our application. This events are now available in the Kafka event bus for other microservices to consume and process.
 
-=== 4. Deploying a Kafka Streams application
+=== 5. Deploying a Kafka Streams application
 
 Text
